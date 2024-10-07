@@ -1152,30 +1152,17 @@ def setup_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--untrain_fid_dir",
-        type=str,
-        default=None,
-        help="Optional directory of validation images to reference for FID validation at 0 training steps to reduce recomputation",
-    )
-    parser.add_argument(
         "--test_dir",
         type=str,
         default=None,
         help=("Filepath directory where test images from dataset are"),
     )
     parser.add_argument(
-        "--fdd_load_dir",
+        "--captioner",
         type=str,
         default=None,
-        help=("Filepath directory where precomputed FDD datasets are"),
-    )
-    parser.add_argument(
-        "--fid_npz",
-        type=str,
-        default=None,
-        help=(
-            "Filepath to npz which will be used as reference dataset for FID score calculation"
-        ),
+        help=("which captioner is being used for training"),
+        choices=["cogvlm", "blip", "llava"],
     )
     parser.add_argument(
         "--clip_aesthetic_score_threshold",
@@ -1204,10 +1191,8 @@ if __name__ == "__main__":
     args.seed = poison_config["seed"]
     args.pretrained_model_name_or_path = poison_config["pretrained_model_name_or_path"]
     args.tracker_project_name = poison_config["tracker_project_name"]
-    args.untrain_fid_dir = poison_config["untrain_fid_dir"]
     args.test_dir = poison_config["test_dir"]
-    args.fdd_load_dir = poison_config["fdd_load_dir"]
-    args.fid_npz = poison_config["fid_npz"]
+    args.captioner = poison_config["captioner"]
     args.sample_prompts = poison_config["sample_prompts"]
     args.fid_prompts = poison_config["fid_prompts"]
     args.max_train_steps = poison_config["max_train_steps"]

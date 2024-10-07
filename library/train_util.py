@@ -6713,7 +6713,7 @@ def sample_images_common(
                     "/home/stanleywu/projects/diffusion-ft/metrics/pytorch-fid/venv-pytorch-fid-3.10/bin/python3",
                     "-m",
                     "pytorch_fid",
-                    args.fid_npz,
+                    args.test_dir,
                     validation_dir,
                 ],
                 capture_output=True,
@@ -6777,6 +6777,11 @@ def sample_images_common(
                         validation_dir,
                         "--threshold",
                         str(args.clip_score_threshold),
+                        "--metadata_jsonl",
+                        os.path.join(
+                            args.test_dir,
+                            f"{args.captioner}_metadata.jsonl",
+                        ),
                     ],
                     capture_output=True,
                     text=True,
@@ -6784,6 +6789,26 @@ def sample_images_common(
                 # Get the output as a float
                 clip_score = float(result.stdout.split(":")[1].strip())
                 log_commit["clip_score"] = clip_score
+            elif args.clip_score_threshold == "":
+                logger.info("Calculating CLIP Threshold...")
+                result = subprocess.run(
+                    [
+                        "/home/stanleywu/projects/video-easel/ml-mobileclip/venv-mobileclip-3.10/bin/python3",
+                        "/home/stanleywu/projects/diffusion-ft/metrics/calc-clip-threshold.py",
+                        "--validation_dir",
+                        validation_dir,
+                        "--metadata_jsonl",
+                        os.path.join(
+                            args.test_dir,
+                            f"{args.captioner}_metadata.jsonl",
+                        ),
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+                extracted_floats = re.findall("\d+\.\d+", str(result))
+                args.clip_score_threshold = float(extracted_floats[-1]) / 100
+                logger.info(f"CLIP Threshold: {args.clip_score_threshold}")
 
         accelerator.wait_for_everyone()
 
