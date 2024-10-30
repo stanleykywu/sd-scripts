@@ -107,6 +107,32 @@ def append_block_lr_to_logs(block_lrs, logs, lr_scheduler, optimizer_type):
 
     train_util.append_lr_to_logs_with_names(logs, lr_scheduler, optimizer_type, names)
 
+def make_subsets_poison(num_total_data, clean_data_dir, clean_data_json, poison):
+    subsets = []
+    running_poison_total = 0
+
+    for poison_concept in poison:
+        num_samples = int(num_total_data * poison_concept["percentage"])
+        running_poison_total += num_samples
+
+        image_dir = poison_concept["poison_data_dir"]
+        metadata_file = os.path.join(poison_concept["poison_data_dir"], "metadata.json")
+
+        subsets.append({
+            "image_dir": image_dir,
+            "metadata_file": metadata_file,
+            "num_samples": num_samples
+        })
+
+    num_clean_data = num_total_data - running_poison_total
+
+    subsets.append({
+        "image_dir": clean_data_dir,
+        "metadata_file": clean_data_json,
+        "num_samples": num_clean_data
+    })
+
+    return subsets
 
 def train(args):
     train_util.verify_training_args(args)
@@ -184,12 +210,7 @@ def train(args):
                 user_config = {
                     "datasets": [
                         {
-                            "subsets": [
-                                {
-                                    "image_dir": args.train_data_dir,
-                                    "metadata_file": args.in_json,
-                                }
-                            ]
+                            "subsets": make_subsets_poison(args.total_data, args.train_data_dir, args.in_json, args.poison)
                         }
                     ]
                 }
@@ -1193,7 +1214,7 @@ if __name__ == "__main__":
     args.tracker_project_name = poison_config["tracker_project_name"]
     args.test_dir = poison_config["test_dir"]
     args.captioner = poison_config["captioner"]
-    args.sample_prompts = poison_config["sample_prompts"]
+    args.sample_prompts = poison_config["sample_prompts"] # equivalent to validation_prompts in the sd2.1 configs
     args.fid_prompts = poison_config["fid_prompts"]
     args.max_train_steps = poison_config["max_train_steps"]
     args.learning_rate = poison_config["learning_rate"]
@@ -1203,6 +1224,8 @@ if __name__ == "__main__":
     args.save_every_n_steps = poison_config["save_every_n_steps"]
     args.train_batch_size = poison_config["train_batch_size"]
     args.gradient_accumulation_steps = poison_config["gradient_accumulation_steps"]
+    args.total_data = poison_config["total_data"]
+    args.poison = poison_config["poison"]
 
     args.tracker_run_name = f"{args.poison_config_fp.split('/')[-1].split('.json')[0]}-{args.seed}seed-{args.max_train_steps}steps-{args.learning_rate}lr-{args.train_batch_size}bs-{args.gradient_accumulation_steps}gradaccum"
     args.output_dir = os.path.join(

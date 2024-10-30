@@ -565,6 +565,7 @@ class FineTuningSubset(BaseSubset):
         caption_suffix,
         token_warmup_min,
         token_warmup_step,
+        num_samples
     ) -> None:
         assert (
             metadata_file is not None
@@ -594,6 +595,7 @@ class FineTuningSubset(BaseSubset):
         )
 
         self.metadata_file = metadata_file
+        self.num_samples = num_samples
 
     def __eq__(self, other) -> bool:
         if not isinstance(other, FineTuningSubset):
@@ -2260,6 +2262,10 @@ class FineTuningDataset(BaseDataset):
                     f"ignore subset with '{subset.metadata_file}': no image entries found / 画像に関するデータが見つからないためサブセットを無視します"
                 )
                 continue
+
+            # select fixed size sample of subset data (for poison)
+            if subset.num_samples > 0:
+                metadata = dict(random.sample(metadata.items(), subset.num_samples))
 
             tags_list = []
             for image_key, img_md in metadata.items():
@@ -6620,9 +6626,9 @@ def sample_images_common(
     accelerator.wait_for_everyone()
 
     if args.eval_fid:
-        if steps == 0 and os.path.exists(args.untrain_fid_dir):
-            validation_dir = args.untrain_fid_dir
-        else:
+        if True: #steps == 0 and os.path.exists(args.untrain_fid_dir):
+        #     validation_dir = args.untrain_fid_dir
+        # else:
             validation_dir = os.path.join(
                 args.output_dir, f"fid-validation-{steps}steps"
             )
@@ -6705,12 +6711,12 @@ def sample_images_common(
 
         accelerator.wait_for_everyone()
 
-        if distributed_state.is_local_main_process:
+        if False and distributed_state.is_local_main_process:
             # Run FID
             logger.info("Generating FID score... ")
             result = subprocess.run(
                 [
-                    "/home/stanleywu/projects/diffusion-ft/metrics/pytorch-fid/venv-pytorch-fid-3.10/bin/python3",
+                    "/home/rbhaskar/diffusion-ft/metrics/venv-pytorch_fid-3.10/bin/python3",
                     "-m",
                     "pytorch_fid",
                     args.test_dir,
@@ -6720,6 +6726,8 @@ def sample_images_common(
                 text=True,
             )
             # Get the output as a float
+            print("FID result")
+            print(f"[{result}]")
             fid_score = float(result.stdout.split(":")[1].strip())
             log_commit["fid_score"] = fid_score
 
@@ -6752,8 +6760,8 @@ def sample_images_common(
             logger.info("Generating CLIP Aesthetic score... ")
             result = subprocess.run(
                 [
-                    "/home/stanleywu/projects/diffusion-ft/metrics/pytorch-fid/venv-pytorch-fid-3.10/bin/python3",
-                    "/home/stanleywu/projects/diffusion-ft/metrics/calc-clip-aesthetic-score.py",
+                    "/home/rbhaskar/diffusion-ft/metrics/venv-pytorch_fid-3.10/bin/python3",
+                    "/home/rbhaskar/diffusion-ft/metrics/calc-clip-aesthetic-score.py",
                     "--validation_dir",
                     validation_dir,
                     "--threshold",
@@ -6762,6 +6770,8 @@ def sample_images_common(
                 capture_output=True,
                 text=True,
             )
+            print("CLIP Aesthetic Result")
+            print(f"[{result}]")
             # Get the output as a float
             clip_aesthetic_score = float(result.stdout.split(":")[1].strip())
             log_commit["clip_aesthetic_score"] = clip_aesthetic_score
@@ -6771,8 +6781,8 @@ def sample_images_common(
                 logger.info("Generating CLIP score... ")
                 result = subprocess.run(
                     [
-                        "/home/stanleywu/projects/video-easel/ml-mobileclip/venv-mobileclip-3.10/bin/python3",
-                        "/home/stanleywu/projects/diffusion-ft/metrics/calc-clip-score.py",
+                        "/home/rbhaskar/diffusion-ft/metrics/venv-mobileclip-3.10/bin/python3",
+                        "/home/rbhaskar/diffusion-ft/metrics/calc-clip-score.py",
                         "--validation_dir",
                         validation_dir,
                         "--threshold",
@@ -6786,15 +6796,17 @@ def sample_images_common(
                     capture_output=True,
                     text=True,
                 )
+                print("CLIP Aesthetic Result")
+                print(f"[{result}]")
                 # Get the output as a float
-                clip_score = float(result.stdout.split(":")[1].strip())
-                log_commit["clip_score"] = clip_score
+                # clip_score = float(result.stdout.split(":")[1].strip())
+                # log_commit["clip_score"] = clip_score
             elif args.clip_score_threshold == "":
                 logger.info("Calculating CLIP Threshold...")
                 result = subprocess.run(
                     [
-                        "/home/stanleywu/projects/video-easel/ml-mobileclip/venv-mobileclip-3.10/bin/python3",
-                        "/home/stanleywu/projects/diffusion-ft/metrics/calc-clip-threshold.py",
+                        "/home/rbhaskar/diffusion-ft/metrics/venv-mobileclip-3.10/bin/python3",
+                        "/home/rbhaskar/diffusion-ft/metrics/calc-clip-threshold.py",
                         "--validation_dir",
                         validation_dir,
                         "--metadata_jsonl",
