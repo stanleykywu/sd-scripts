@@ -88,6 +88,7 @@ class DreamBoothSubsetParams(BaseSubsetParams):
 class FineTuningSubsetParams(BaseSubsetParams):
     metadata_file: Optional[str] = None
     alpha_mask: bool = False
+    num_samples: Optional[int] = -1
 
 
 @dataclass
@@ -216,6 +217,7 @@ class ConfigSanitizer:
         Required("metadata_file"): str,
         "image_dir": str,
         "alpha_mask": bool,
+        "num_samples": int
     }
     CN_SUBSET_ASCENDABLE_SCHEMA = {
         "caption_extension": str,
