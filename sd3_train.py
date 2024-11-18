@@ -57,6 +57,10 @@ def train(args):
     deepspeed_utils.prepare_deepspeed_args(args)
     setup_logging(args, reset=True)
 
+    # temporary: backward compatibility for deprecated options. remove in the future
+    if not args.skip_cache_check:
+        args.skip_cache_check = args.skip_latents_validity_check
+
     assert (
         not args.weighted_captions
     ), "weighted_captions is not supported currently / weighted_captionsは現在サポートされていません"
@@ -103,7 +107,7 @@ def train(args):
     # prepare caching strategy: this must be set before preparing dataset. because dataset may use this strategy for initialization.
     if args.cache_latents:
         latents_caching_strategy = strategy_sd3.Sd3LatentsCachingStrategy(
-            args.cache_latents_to_disk, args.vae_batch_size, args.skip_latents_validity_check
+            args.cache_latents_to_disk, args.vae_batch_size, args.skip_cache_check
         )
         strategy_base.LatentsCachingStrategy.set_strategy(latents_caching_strategy)
 
@@ -239,7 +243,7 @@ def train(args):
         vae.requires_grad_(False)
         vae.eval()
 
-        train_dataset_group.new_cache_latents(vae, accelerator.is_main_process)
+        train_dataset_group.new_cache_latents(vae, accelerator)
 
         vae.to("cpu")  # if no sampling, vae can be deleted
         clean_memory_on_device(accelerator.device)
@@ -312,7 +316,7 @@ def train(args):
         text_encoder_caching_strategy = strategy_sd3.Sd3TextEncoderOutputsCachingStrategy(
             args.cache_text_encoder_outputs_to_disk,
             args.text_encoder_batch_size,
-            False,
+            args.skip_cache_check,
             train_clip_g or train_clip_l or args.use_t5xxl_cache_only,
             args.apply_lg_attn_mask,
             args.apply_t5_attn_mask,
@@ -325,7 +329,7 @@ def train(args):
             t5xxl.to(t5xxl_device, dtype=t5xxl_dtype)
 
         with accelerator.autocast():
-            train_dataset_group.new_cache_text_encoder_outputs([clip_l, clip_g, t5xxl], accelerator.is_main_process)
+            train_dataset_group.new_cache_text_encoder_outputs([clip_l, clip_g, t5xxl], accelerator)
 
         # cache sample prompt's embeddings to free text encoder's memory
         if args.sample_prompts is not None:
@@ -682,6 +686,9 @@ def train(args):
 
     # For --sample_at_first
     sd3_train_utils.sample_images(accelerator, args, 0, global_step, mmdit, vae, [clip_l, clip_g, t5xxl], sample_prompts_te_outputs)
+    if len(accelerator.trackers) > 0:
+        # log empty object to commit the sample images to wandb
+        accelerator.log({}, step=0)
 
     # following function will be moved to sd3_train_utils
 
@@ -901,7 +908,7 @@ def train(args):
                         )
 
             current_loss = loss.detach().item()  # 平均なのでbatch sizeは関係ないはず
-            if args.logging_dir is not None:
+            if len(accelerator.trackers) > 0:
                 logs = {"loss": current_loss}
                 train_util.append_lr_to_logs(logs, lr_scheduler, args.optimizer_type, including_unet=train_mmdit)
 
@@ -915,7 +922,7 @@ def train(args):
             if global_step >= args.max_train_steps:
                 break
 
-        if args.logging_dir is not None:
+        if len(accelerator.trackers) > 0:
             logs = {"loss/epoch": loss_recorder.moving_average}
             accelerator.log(logs, step=epoch + 1)
 
@@ -1049,7 +1056,12 @@ def setup_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--skip_latents_validity_check",
         action="store_true",
-        help="skip latents validity check / latentsの正当性チェックをスキップする",
+        help="[Deprecated] use 'skip_cache_check' instead / 代わりに 'skip_cache_check' を使用してください",
+    )
+    parser.add_argument(
+        "--skip_cache_check",
+        action="store_true",
+        help="skip cache (latents and text encoder outputs) check / キャッシュ（latentsとtext encoder outputs）のチェックをスキップする",
     )
     parser.add_argument(
         "--num_last_block_to_freeze",

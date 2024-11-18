@@ -565,7 +565,7 @@ class FineTuningSubset(BaseSubset):
         caption_suffix,
         token_warmup_min,
         token_warmup_step,
-        num_samples
+        num_samples,
     ) -> None:
         assert (
             metadata_file is not None
@@ -6627,10 +6627,105 @@ def sample_images_common(
 
     accelerator.wait_for_everyone()
 
+    if args.concept_eval_dir != "" and steps % args.fid_validation_steps == 0:
+        concept_eval_output_dir = os.path.join(
+            args.output_dir, f"concept-eval", f"{steps}steps"
+        )
+        for concept in tqdm(
+            os.listdir(args.concept_eval_dir), desc="generating concept evaluation"
+        ):
+            concept_output_dir = os.path.join(concept_eval_output_dir, concept)
+            os.makedirs(concept_output_dir, exist_ok=True)
+
+            prompts = []
+            # Read and process the .jsonl file
+            with open(
+                os.path.join(args.concept_eval_dir, concept, "metadata.jsonl"), "r"
+            ) as file:
+                for line in file:
+                    # Parse each line as JSON
+                    json_obj = json.loads(line)
+
+                    # Assuming the key is named 'id', update the dictionary
+                    prompt_dict = json_obj["text"]
+                    if isinstance(prompt_dict, str):
+                        prompt_dict = line_to_prompt_dict(prompt_dict)
+                        prompts.append(prompt_dict)
+                    assert isinstance(prompt_dict, dict)
+
+                    # Adds a name for the file to be saved after. Also cleanup of extra data in original prompt dict.
+                    prompt_dict["image_id"] = json_obj["file_name"].replace(".png", "")
+                    prompt_dict.pop("subset", None)
+
+            # save random state to restore later
+            rng_state = torch.get_rng_state()
+            cuda_rng_state = None
+            try:
+                cuda_rng_state = (
+                    torch.cuda.get_rng_state() if torch.cuda.is_available() else None
+                )
+            except Exception:
+                pass
+
+            if distributed_state.num_processes <= 1:
+                # If only one device is available, just use the original prompt list. We don't need to care about the distribution of prompts.
+                with torch.no_grad():
+                    for prompt_dict in tqdm(
+                        prompts, desc="Generating Concept Validation"
+                    ):
+                        sample_image_inference(
+                            accelerator,
+                            args,
+                            pipeline,
+                            concept_output_dir,
+                            prompt_dict,
+                            epoch,
+                            steps,
+                            prompt_replacement,
+                            controlnet=controlnet,
+                        )
+            else:
+                # Creating list with N elements, where each element is a list of prompt_dicts, and N is the number of processes available (number of devices available)
+                # prompt_dicts are assigned to lists based on order of processes, to attempt to time the image creation time to match enum order. Probably only works when steps and sampler are identical.
+                per_process_prompts = []  # list of lists
+                for i in range(distributed_state.num_processes):
+                    per_process_prompts.append(
+                        prompt_dict[i :: distributed_state.num_processes]
+                    )
+
+                num_steps = math.ceil(
+                    len(prompt_dict) / distributed_state.num_processes
+                )
+                progress = tqdm(
+                    total=num_steps, disable=not distributed_state.is_local_main_process
+                )  # only show progress on the main process
+
+                with torch.no_grad():
+                    with distributed_state.split_between_processes(
+                        per_process_prompts
+                    ) as prompt_dict_lists:
+                        for prompt_dict in prompt_dict_lists[0]:
+                            sample_image_inference(
+                                accelerator,
+                                args,
+                                pipeline,
+                                concept_output_dir,
+                                prompt_dict,
+                                epoch,
+                                steps,
+                                prompt_replacement,
+                                controlnet=controlnet,
+                            )
+                            progress.update(1)
+
+            accelerator.wait_for_everyone()
+
+    accelerator.wait_for_everyone()
+
     if args.eval_fid:
-        if True: #steps == 0 and os.path.exists(args.untrain_fid_dir):
-        #     validation_dir = args.untrain_fid_dir
-        # else:
+        if steps == 0 and os.path.exists(args.untrain_fid_dir):
+            validation_dir = args.untrain_fid_dir
+        else:
             validation_dir = os.path.join(
                 args.output_dir, f"fid-validation-{steps}steps"
             )
@@ -6713,12 +6808,12 @@ def sample_images_common(
 
         accelerator.wait_for_everyone()
 
-        if False and distributed_state.is_local_main_process:
+        if distributed_state.is_local_main_process:
             # Run FID
             logger.info("Generating FID score... ")
             result = subprocess.run(
                 [
-                    "/home/rbhaskar/diffusion-ft/metrics/venv-pytorch_fid-3.10/bin/python3",
+                    "/home/stanleywu/projects/diffusion-ft/metrics/pytorch-fid/venv-pytorch-fid-3.10/bin/python3",
                     "-m",
                     "pytorch_fid",
                     args.test_dir,
@@ -6728,8 +6823,6 @@ def sample_images_common(
                 text=True,
             )
             # Get the output as a float
-            print("FID result")
-            print(f"[{result}]")
             fid_score = float(result.stdout.split(":")[1].strip())
             log_commit["fid_score"] = fid_score
 
@@ -6762,8 +6855,8 @@ def sample_images_common(
             logger.info("Generating CLIP Aesthetic score... ")
             result = subprocess.run(
                 [
-                    "/home/rbhaskar/diffusion-ft/metrics/venv-pytorch_fid-3.10/bin/python3",
-                    "/home/rbhaskar/diffusion-ft/metrics/calc-clip-aesthetic-score.py",
+                    "/home/stanleywu/projects/diffusion-ft/metrics/pytorch-fid/venv-pytorch-fid-3.10/bin/python3",
+                    "/home/stanleywu/projects/diffusion-ft/metrics/calc-clip-aesthetic-score.py",
                     "--validation_dir",
                     validation_dir,
                     "--threshold",
@@ -6772,8 +6865,6 @@ def sample_images_common(
                 capture_output=True,
                 text=True,
             )
-            print("CLIP Aesthetic Result")
-            print(f"[{result}]")
             # Get the output as a float
             clip_aesthetic_score = float(result.stdout.split(":")[1].strip())
             log_commit["clip_aesthetic_score"] = clip_aesthetic_score
@@ -6783,8 +6874,8 @@ def sample_images_common(
                 logger.info("Generating CLIP score... ")
                 result = subprocess.run(
                     [
-                        "/home/rbhaskar/diffusion-ft/metrics/venv-mobileclip-3.10/bin/python3",
-                        "/home/rbhaskar/diffusion-ft/metrics/calc-clip-score.py",
+                        "/home/stanleywu/projects/video-easel/ml-mobileclip/venv-mobileclip-3.10/bin/python3",
+                        "/home/stanleywu/projects/diffusion-ft/metrics/calc-clip-score.py",
                         "--validation_dir",
                         validation_dir,
                         "--threshold",
@@ -6798,17 +6889,15 @@ def sample_images_common(
                     capture_output=True,
                     text=True,
                 )
-                print("CLIP Aesthetic Result")
-                print(f"[{result}]")
                 # Get the output as a float
-                # clip_score = float(result.stdout.split(":")[1].strip())
-                # log_commit["clip_score"] = clip_score
+                clip_score = float(result.stdout.split(":")[1].strip())
+                log_commit["clip_score"] = clip_score
             elif args.clip_score_threshold == "":
                 logger.info("Calculating CLIP Threshold...")
                 result = subprocess.run(
                     [
-                        "/home/rbhaskar/diffusion-ft/metrics/venv-mobileclip-3.10/bin/python3",
-                        "/home/rbhaskar/diffusion-ft/metrics/calc-clip-threshold.py",
+                        "/home/stanleywu/projects/video-easel/ml-mobileclip/venv-mobileclip-3.10/bin/python3",
+                        "/home/stanleywu/projects/diffusion-ft/metrics/calc-clip-threshold.py",
                         "--validation_dir",
                         validation_dir,
                         "--metadata_jsonl",

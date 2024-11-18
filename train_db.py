@@ -64,7 +64,7 @@ def train(args):
 
     # prepare caching strategy: this must be set before preparing dataset. because dataset may use this strategy for initialization.
     latents_caching_strategy = strategy_sd.SdSdxlLatentsCachingStrategy(
-        False, args.cache_latents_to_disk, args.vae_batch_size, False
+        False, args.cache_latents_to_disk, args.vae_batch_size, args.skip_cache_check
     )
     strategy_base.LatentsCachingStrategy.set_strategy(latents_caching_strategy)
 
@@ -100,6 +100,8 @@ def train(args):
 
     if args.no_token_padding:
         train_dataset_group.disable_token_padding()
+
+    train_dataset_group.verify_bucket_reso_steps(64)
 
     if args.debug_dataset:
         train_util.debug_dataset(train_dataset_group)
@@ -154,7 +156,7 @@ def train(args):
         vae.requires_grad_(False)
         vae.eval()
 
-        train_dataset_group.new_cache_latents(vae, accelerator.is_main_process)
+        train_dataset_group.new_cache_latents(vae, accelerator)
 
         vae.to("cpu")
         clean_memory_on_device(accelerator.device)
@@ -315,6 +317,9 @@ def train(args):
     train_util.sample_images(
         accelerator, args, 0, global_step, accelerator.device, vae, tokenize_strategy.tokenizer, text_encoder, unet
     )
+    if len(accelerator.trackers) > 0:
+        # log empty object to commit the sample images to wandb
+        accelerator.log({}, step=0)
 
     loss_recorder = train_util.LossRecorder()
     for epoch in range(num_train_epochs):
@@ -351,21 +356,17 @@ def train(args):
                 # Get the text embedding for conditioning
                 with torch.set_grad_enabled(global_step < args.stop_text_encoder_training):
                     if args.weighted_captions:
-                        encoder_hidden_states = get_weighted_text_embeddings(
-                            tokenize_strategy.tokenizer,
-                            text_encoder,
-                            batch["captions"],
-                            accelerator.device,
-                            args.max_token_length // 75 if args.max_token_length else 1,
-                            clip_skip=args.clip_skip,
-                        )
+                        input_ids_list, weights_list = tokenize_strategy.tokenize_with_weights(batch["captions"])
+                        encoder_hidden_states = text_encoding_strategy.encode_tokens_with_weights(
+                            tokenize_strategy, [text_encoder], input_ids_list, weights_list
+                        )[0]
                     else:
                         input_ids = batch["input_ids_list"][0].to(accelerator.device)
                         encoder_hidden_states = text_encoding_strategy.encode_tokens(
                             tokenize_strategy, [text_encoder], [input_ids]
                         )[0]
-                        if args.full_fp16:
-                            encoder_hidden_states = encoder_hidden_states.to(weight_dtype)
+                    if args.full_fp16:
+                        encoder_hidden_states = encoder_hidden_states.to(weight_dtype)
 
                 # Sample noise, sample a random timestep for each image, and add noise to the latents,
                 # with noise offset and/or multires noise if specified
@@ -398,7 +399,7 @@ def train(args):
                 if args.scale_v_pred_loss_like_noise_pred:
                     loss = scale_v_prediction_loss_like_noise_prediction(loss, timesteps, noise_scheduler)
                 if args.debiased_estimation_loss:
-                    loss = apply_debiased_estimation(loss, timesteps, noise_scheduler)
+                    loss = apply_debiased_estimation(loss, timesteps, noise_scheduler, args.v_parameterization)
 
                 loss = loss.mean()  # 平均なのでbatch_sizeで割る必要なし
 
@@ -445,7 +446,7 @@ def train(args):
                         )
 
             current_loss = loss.detach().item()
-            if args.logging_dir is not None:
+            if len(accelerator.trackers) > 0:
                 logs = {"loss": current_loss}
                 train_util.append_lr_to_logs(logs, lr_scheduler, args.optimizer_type, including_unet=True)
                 accelerator.log(logs, step=global_step)
@@ -458,7 +459,7 @@ def train(args):
             if global_step >= args.max_train_steps:
                 break
 
-        if args.logging_dir is not None:
+        if len(accelerator.trackers) > 0:
             logs = {"loss/epoch": loss_recorder.moving_average}
             accelerator.log(logs, step=epoch + 1)
 

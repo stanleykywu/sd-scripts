@@ -1195,6 +1195,11 @@ def setup_parser() -> argparse.ArgumentParser:
         type=float,
         help="Evaluation threshold for clip image/text sim score, only images above this threshold will be considered",
     )
+    parser.add_argument(
+        "--concept_eval_dir",
+        type=str,
+        help="directory of concepts to evaluate on",
+    )
     return parser
 
 
@@ -1212,7 +1217,7 @@ if __name__ == "__main__":
     args.seed = poison_config["seed"]
     args.pretrained_model_name_or_path = poison_config["pretrained_model_name_or_path"]
     args.tracker_project_name = poison_config["tracker_project_name"]
-    args.test_dir = poison_config["test_dir"]
+    # args.test_dir = poison_config["test_dir"]
     args.captioner = poison_config["captioner"]
     args.sample_prompts = poison_config["sample_prompts"] # equivalent to validation_prompts in the sd2.1 configs
     args.fid_prompts = poison_config["fid_prompts"]
@@ -1237,5 +1242,6 @@ if __name__ == "__main__":
     ]
     args.clip_score_threshold = poison_config["clip_score_threshold"]
     args.eval_fid = poison_config["eval_fid"] if "eval_fid" in poison_config else True
+    args.concept_eval_dir = poison_config["concept_eval_dir"]
 
     train(args)
