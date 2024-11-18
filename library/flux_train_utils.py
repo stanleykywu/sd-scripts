@@ -58,7 +58,8 @@ def sample_images(
 
     logger.info("")
     logger.info(f"generating sample images at step / サンプル画像生成 ステップ: {steps}")
-    if not os.path.isfile(args.sample_prompts) and sample_prompts_te_outputs is None:
+    # should short-circuit evaluate when given list
+    if type(args.sample_prompts) != list and not os.path.isfile(args.sample_prompts) and sample_prompts_te_outputs is None:
         logger.error(f"No prompt file / プロンプトファイルがありません: {args.sample_prompts}")
         return
 
@@ -70,7 +71,7 @@ def sample_images(
         text_encoders = [accelerator.unwrap_model(te) for te in text_encoders]
     # print([(te.parameters().__next__().device if te is not None else None) for te in text_encoders])
 
-    prompts = load_prompts(args.sample_prompts)
+    prompts = load_prompts(args.sample_prompts, seed=args.seed)
 
     save_dir = args.output_dir + "/sample"
     os.makedirs(save_dir, exist_ok=True)
@@ -143,12 +144,13 @@ def sample_image_inference(
     steps,
     sample_prompts_te_outputs,
     prompt_replacement,
+    dtype=torch.bfloat16
 ):
     assert isinstance(prompt_dict, dict)
     # negative_prompt = prompt_dict.get("negative_prompt")
-    sample_steps = prompt_dict.get("sample_steps", 20)
-    width = prompt_dict.get("width", 512)
-    height = prompt_dict.get("height", 512)
+    sample_steps = prompt_dict.get("sample_steps", 35)
+    width = prompt_dict.get("width", 1024)
+    height = prompt_dict.get("height", 1024)
     scale = prompt_dict.get("scale", 3.5)
     seed = prompt_dict.get("seed")
     # controlnet_image = prompt_dict.get("controlnet_image")
@@ -227,6 +229,7 @@ def sample_image_inference(
 
     with accelerator.autocast(), torch.no_grad():
         x = denoise(flux, noise, img_ids, t5_out, txt_ids, l_pooled, timesteps=timesteps, guidance=scale, t5_attn_mask=t5_attn_mask)
+
 
     x = x.float()
     x = flux_utils.unpack_latents(x, packed_latent_height, packed_latent_width)
@@ -323,6 +326,7 @@ def denoise(
         )
 
         img = img + (t_prev - t_curr) * pred
+
 
     return img
 
