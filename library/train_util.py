@@ -2277,6 +2277,8 @@ class FineTuningDataset(BaseDataset):
                     abs_path = image_key
                 else:
                     # わりといい加減だがいい方法が思いつかん
+                    print(f"Subset Image Dir: [{subset.image_dir}]")
+                    print(f"Image Key: [{image_key}]")
                     paths = glob_images(subset.image_dir, image_key)
                     if len(paths) > 0:
                         abs_path = paths[0]

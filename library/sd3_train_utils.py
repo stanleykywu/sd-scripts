@@ -371,9 +371,16 @@ def do_sample(
     return x
 
 
-def load_prompts(prompt_file: str) -> List[Dict]:
-    # read prompts
-    if prompt_file.endswith(".txt"):
+def load_prompts(prompt_file: str, seed=None) -> List[Dict]:
+    # in case the prompts are a list and not a file path
+    if type(prompt_file) == list:
+        if all((type(prompt) == str for prompt in prompt_file)):
+            if seed:
+                prompts = [{"prompt": prompt, "seed": seed} for prompt in prompt_file]
+            else:
+                prompts = [{"prompt": prompt} for prompt in prompt_file]
+    # read prompts if actual file path
+    elif prompt_file.endswith(".txt"):
         with open(prompt_file, "r", encoding="utf-8") as f:
             lines = f.readlines()
         prompts = [line.strip() for line in lines if len(line.strip()) > 0 and line[0] != "#"]
@@ -440,7 +447,7 @@ def sample_images(
     text_encoders = [accelerator.unwrap_model(te) for te in text_encoders]
     # print([(te.parameters().__next__().device if te is not None else None) for te in text_encoders])
 
-    prompts = load_prompts(args.sample_prompts)
+    prompts = load_prompts(args.sample_prompts, seed=args.seed)
 
     save_dir = args.output_dir + "/sample"
     os.makedirs(save_dir, exist_ok=True)
