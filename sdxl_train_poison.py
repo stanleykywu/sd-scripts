@@ -1195,6 +1195,12 @@ def setup_parser() -> argparse.ArgumentParser:
         type=float,
         help="Evaluation threshold for clip image/text sim score, only images above this threshold will be considered",
     )
+    # parser.add_argument(
+    #     "--ddp_timeout",
+    #     type=int,
+    #     default=2160000000,
+    #     help="timeout before Watchdog parallelization realizes it hasn't resync'ed and kills your process"
+    # )
     return parser
 
 

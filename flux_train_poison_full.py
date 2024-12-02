@@ -958,6 +958,12 @@ def setup_parser() -> argparse.ArgumentParser:
         help="[EXPERIMENTAL] enable offloading of tensors to CPU during checkpointing / チェックポイント時にテンソルをCPUにオフロードする",
     )
     # parser.add_argument(
+    #     "--ddp_timeout",
+    #     type=int,
+    #     default=2160000000,
+    #     help="timeout before Watchdog parallelization realizes it hasn't resync'ed and kills your process"
+    # )
+    # parser.add_argument(
     #     "--learning_rate",
     #     type=float,
     #     default=None,

@@ -11,18 +11,20 @@ from accelerate import Accelerator
 from typing import List, Dict
 import logging
 
+CACHE_DIR = "/bigstor/rbhaskar/diffusion-ft/models"
+
 def load_json(json_path: str) -> Dict:
     with open(json_path, 'r') as f:
         data = json.load(f)
     return data
 
-
-def initialise_pipeline(my_flux_ft_safetensor_path: str, dtype=torch.bfloat16, device=None) -> FluxPipeline:
+def initialise_pipeline(my_flux_ft_safetensor_path: str, dtype=torch.bfloat16, device="cuda") -> FluxPipeline:
     bfl_repo = "black-forest-labs/FLUX.1-dev"
 
     transformer = FluxTransformer2DModel.from_single_file(
-        f"/bigstor/annaha/diffusion-ft/models/flux/{my_flux_ft_safetensor_path}",
-        torch_dtype=dtype
+        my_flux_ft_safetensor_path,
+        torch_dtype=dtype,
+        # token=os.environ["HF_TOKEN"],
     )
     freeze(transformer)
     transformer.to(device)
@@ -30,16 +32,20 @@ def initialise_pipeline(my_flux_ft_safetensor_path: str, dtype=torch.bfloat16, d
     text_encoder_2 = T5EncoderModel.from_pretrained(
         bfl_repo,
         subfolder="text_encoder_2",
-        torch_dtype=dtype
+        torch_dtype=dtype,
+        cache_dir=CACHE_DIR
     )
+
     freeze(text_encoder_2)
     text_encoder_2.to(device)
 
     pipe = FluxPipeline.from_pretrained(
         bfl_repo,
+        # token=os.environ["HF_TOKEN"],
         transformer=None,
         text_encoder_2=None,
-        torch_dtype=dtype
+        torch_dtype=dtype,
+        cache_dir=CACHE_DIR
     )
     pipe.transformer = transformer
     pipe.text_encoder_2 = text_encoder_2
@@ -91,6 +97,12 @@ def main():
         default=4,
         help='Number of images to generate in each batch.'
     )
+    parser.add_argument(
+        '--output_dir',
+        type=str,
+        required=True,
+        help='Base directory for outputting the generated images.'
+    )
     args = parser.parse_args()
 
     accelerator = Accelerator()
@@ -108,13 +120,7 @@ def main():
     )
     logger = logging.getLogger()
 
-    config_path = args.config_path
-
-    if accelerator.is_local_main_process:
-        logger.info(f"Loading configuration from {config_path}...")
-    config = load_json(config_path)
-
-    base_output_dir = "/bigstor/annaha/diffusion-ft/generated-imgs/flux-ft"
+    base_output_dir = args.output_dir
     model_basename = os.path.splitext(os.path.basename(args.safetensor_model))[0]
     images_output_dir = os.path.join(base_output_dir, model_basename)
 
@@ -126,12 +132,19 @@ def main():
     if accelerator.is_local_main_process:
         logger.info(f"Images will be saved to {images_output_dir}")
         logger.info(f"Loading fid_prompts from {args.config_path}...")
-    data = load_json(args.config_path)
+    config = load_json(args.config_path)
 
-    fid_prompts = data.get("fid_prompts", [])
+    fid_prompts = config.get("fid_prompts", [])
     if not fid_prompts:
         logger.warning("No fid_prompts found in the JSON file.")
         return
+    
+    def img_exists(fid_prompt):
+        image_id = fid_prompt["image_id"]
+        return os.path.exists(os.path.join(images_output_dir, f"{image_id}.png"))
+
+    # skip images that have already been generated
+    fid_prompts = [fid_prompt for fid_prompt in fid_prompts if not img_exists(fid_prompt)]
 
     total_prompts = len(fid_prompts)
     prompts_per_process = total_prompts // num_processes
@@ -152,7 +165,7 @@ def main():
 
     logger.info("Starting image generation...")
 
-    seed = 188459528  
+    seed = config["seed"]  
 
     batch_size = args.batch_size
     total_batches = (len(fid_prompts) + batch_size - 1) // batch_size
@@ -169,8 +182,8 @@ def main():
             image_id = item.get("image_id")
             caption = item.get("caption")
 
-            if image_id is None or caption is None:
-                logger.warning(f"Process {process_index}: Skipping invalid entry: {item}")
+            if image_id is None or caption is None or os.path.exists(os.path.join(images_output_dir, f"{image_id}.png")):
+                logger.warning(f"Process {process_index}: Skipping invalid/pre-existing entry: {item}")
                 continue
 
             prompts.append(caption)
